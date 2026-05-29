@@ -82,10 +82,17 @@ button.send:disabled{opacity:.5;cursor:not-allowed}
   <div class="composer">
     <div class="res-chips" id="resChips"></div>
     <div class="dur">
-      <span>тайминг исходника (опц.):</span>
+      <span>момент в видео (опц.):</span>
       <input type="text" id="startT" placeholder="с  1:46" >
       <input type="text" id="endT" placeholder="по  3:24" >
-      <span class="hint" style="margin-left:10px">берём только клипы с рейтингом ≥ 85</span>
+      <span class="hint" style="margin-left:10px">нарезка из этого окна — клип придёт с авто-субтитрами OpusClip</span>
+    </div>
+    <div class="dur">
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+        <input type="checkbox" id="topOnly">
+        <span>только лучший клип (топ-1 по рейтингу)</span>
+      </label>
+      <span class="hint" style="margin-left:10px">по умолчанию: все клипы с рейтингом ≥ 85</span>
     </div>
     <div class="dur">
       <span>длина клипа, сек (опц.):</span>
@@ -162,9 +169,13 @@ async function send(){
   addUser(`${url}<br><span style="font-size:11px;opacity:.7">${resolutions.join(', ')}</span>`);
   urlInput.value=''; sendBtn.disabled=true;
 
+  const startS = parseTime(document.getElementById('startT').value);
+  const endS   = parseTime(document.getElementById('endT').value);
+
   const body = { video_url:url, resolutions };
-  const startS = parseTime(document.getElementById('startT').value); if(startS!==null) body.start_sec=startS;
-  const endS   = parseTime(document.getElementById('endT').value);   if(endS!==null)   body.end_sec=endS;
+  body.top_only = document.getElementById('topOnly').checked;
+  if(startS!==null) body.start_sec=startS;
+  if(endS!==null)   body.end_sec=endS;
   const minD = parseInt(document.getElementById('minDur').value); if(minD>0) body.clip_min=minD;
   const maxD = parseInt(document.getElementById('maxDur').value); if(maxD>0) body.clip_max=maxD;
 

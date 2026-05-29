@@ -41,12 +41,14 @@ def _safe_name(name: str, maxlen: int = 50) -> str:
 
 class Job:
     def __init__(self, job_id: str, video_url: str, resolutions: list[str],
-                 curation_pref: Optional[dict] = None, min_score: int = 0):
+                 curation_pref: Optional[dict] = None, min_score: int = 0,
+                 top_only: bool = False):
         self.id = job_id
         self.video_url = video_url
         self.resolutions = resolutions
         self.curation_pref = curation_pref
         self.min_score = min_score
+        self.top_only = top_only       # взять только лучший клип (топ-1 по рейтингу)
         self.status = "queued"
         self.project_id: Optional[str] = None
         self.error: Optional[str] = None
@@ -97,9 +99,10 @@ class JobStore:
         self._jobs: dict[str, Job] = {}
 
     def create(self, video_url: str, resolutions: list[str],
-               curation_pref: Optional[dict] = None, min_score: int = 0) -> Job:
+               curation_pref: Optional[dict] = None, min_score: int = 0,
+               top_only: bool = False) -> Job:
         job_id = uuid.uuid4().hex[:12]
-        job = Job(job_id, video_url, resolutions, curation_pref, min_score)
+        job = Job(job_id, video_url, resolutions, curation_pref, min_score, top_only)
         job.dir.mkdir(parents=True, exist_ok=True)
         self._jobs[job_id] = job
         return job
@@ -176,6 +179,10 @@ async def _wait_for_clips(job: Job, opus: OpusClient) -> list[dict]:
                     f"Фильтр рейтинга ≥ {job.min_score}: оставлено {len(ready)} из {before}")
                 if not ready:
                     job.add_log("Под порог рейтинга не прошёл ни один клип", "warn")
+            if job.top_only and ready:
+                ready.sort(key=lambda c: (clip_score(c) or 0), reverse=True)
+                ready = ready[:1]
+                job.add_log(f"Только лучший клип (score={clip_score(ready[0])})")
             job.clips = [
                 {"title": clip_title(c, f"clip_{i+1}"),
                  "url": clip_download_url(c),

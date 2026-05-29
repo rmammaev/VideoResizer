@@ -58,6 +58,7 @@ class JobRequest(BaseModel):
     clip_min: Optional[int] = None       # длина клипа, сек (нижняя граница)
     clip_max: Optional[int] = None       # длина клипа, сек (верхняя граница)
     min_score: Optional[int] = None      # порог virality-рейтинга 0..100
+    top_only: bool = False               # взять только лучший клип (топ-1)
     language: Optional[str] = None       # importPref.sourceLang
 
 
@@ -110,7 +111,7 @@ async def api_create_job(req: JobRequest):
     raw_score = req.min_score if req.min_score is not None else DEFAULT_MIN_SCORE
     min_score = max(0, min(100, raw_score))
     job = jobs_mod.store.create(
-        req.video_url.strip(), req.resolutions, curation, min_score)
+        req.video_url.strip(), req.resolutions, curation, min_score, req.top_only)
     asyncio.create_task(jobs_mod.run_job(job, opus, WEBHOOK_URL))
     return {"id": job.id, "status": job.status}
 
