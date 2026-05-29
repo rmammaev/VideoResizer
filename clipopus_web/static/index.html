@@ -82,7 +82,14 @@ button.send:disabled{opacity:.5;cursor:not-allowed}
   <div class="composer">
     <div class="res-chips" id="resChips"></div>
     <div class="dur">
-      длительность клипа (сек, опц.):
+      <span>тайминг исходника (опц.):</span>
+      <input type="text" id="startT" placeholder="с  1:46" >
+      <input type="text" id="endT" placeholder="по  3:24" >
+      <span style="margin-left:10px">рейтинг ≥</span>
+      <input type="number" id="minScore" placeholder="напр. 90" min="0" max="100">
+    </div>
+    <div class="dur">
+      <span>длина клипа, сек (опц.):</span>
       <input type="number" id="minDur" placeholder="мин" min="0">
       <input type="number" id="maxDur" placeholder="макс" min="0">
     </div>
@@ -104,6 +111,16 @@ let selected = new Set();
 
 function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
 function scroll(){chat.scrollTop = chat.scrollHeight;}
+
+// "1:46" -> 106, "1:02:03" -> 3723, "90" -> 90, "" -> null
+function parseTime(v){
+  v = (v||'').trim();
+  if(!v) return null;
+  if(v.indexOf(':')<0){ const n=parseInt(v); return isNaN(n)?null:n; }
+  const parts = v.split(':').map(x=>parseInt(x)||0);
+  let s=0; for(const p of parts) s = s*60 + p;
+  return s;
+}
 
 function addUser(text){
   chat.appendChild(el(`<div class="msg user"><div class="av">🧑</div><div class="bubble">${text}</div></div>`));
@@ -147,8 +164,11 @@ async function send(){
   urlInput.value=''; sendBtn.disabled=true;
 
   const body = { video_url:url, resolutions };
-  const minD = parseInt(document.getElementById('minDur').value); if(minD>0) body.min_duration=minD;
-  const maxD = parseInt(document.getElementById('maxDur').value); if(maxD>0) body.max_duration=maxD;
+  const startS = parseTime(document.getElementById('startT').value); if(startS!==null) body.start_sec=startS;
+  const endS   = parseTime(document.getElementById('endT').value);   if(endS!==null)   body.end_sec=endS;
+  const minD = parseInt(document.getElementById('minDur').value); if(minD>0) body.clip_min=minD;
+  const maxD = parseInt(document.getElementById('maxDur').value); if(maxD>0) body.clip_max=maxD;
+  const ms   = parseInt(document.getElementById('minScore').value); if(ms>0) body.min_score=ms;
 
   let resp;
   try{ resp = await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }

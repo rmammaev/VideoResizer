@@ -21,6 +21,7 @@ from opus_client import (
     OpusClient,
     OpusError,
     clip_download_url,
+    clip_score,
     clip_title,
     project_id_from_response,
 )
@@ -40,11 +41,12 @@ def _safe_name(name: str, maxlen: int = 50) -> str:
 
 class Job:
     def __init__(self, job_id: str, video_url: str, resolutions: list[str],
-                 curation_pref: Optional[dict] = None):
+                 curation_pref: Optional[dict] = None, min_score: int = 0):
         self.id = job_id
         self.video_url = video_url
         self.resolutions = resolutions
         self.curation_pref = curation_pref
+        self.min_score = min_score
         self.status = "queued"
         self.project_id: Optional[str] = None
         self.error: Optional[str] = None
@@ -94,9 +96,9 @@ class JobStore:
         self._jobs: dict[str, Job] = {}
 
     def create(self, video_url: str, resolutions: list[str],
-               curation_pref: Optional[dict] = None) -> Job:
+               curation_pref: Optional[dict] = None, min_score: int = 0) -> Job:
         job_id = uuid.uuid4().hex[:12]
-        job = Job(job_id, video_url, resolutions, curation_pref)
+        job = Job(job_id, video_url, resolutions, curation_pref, min_score)
         job.dir.mkdir(parents=True, exist_ok=True)
         self._jobs[job_id] = job
         return job
@@ -166,8 +168,17 @@ async def _wait_for_clips(job: Job, opus: OpusClient) -> list[dict]:
         ready = [c for c in clips if clip_download_url(c)]
         if ready:
             job.add_log(f"Найдено клипов: {len(ready)}")
+            if job.min_score:
+                before = len(ready)
+                ready = [c for c in ready if (clip_score(c) or 0) >= job.min_score]
+                job.add_log(
+                    f"Фильтр рейтинга ≥ {job.min_score}: оставлено {len(ready)} из {before}")
+                if not ready:
+                    job.add_log("Под порог рейтинга не прошёл ни один клип", "warn")
             job.clips = [
-                {"title": clip_title(c, f"clip_{i+1}"), "url": clip_download_url(c)}
+                {"title": clip_title(c, f"clip_{i+1}"),
+                 "url": clip_download_url(c),
+                 "score": clip_score(c)}
                 for i, c in enumerate(ready)
             ]
             return ready

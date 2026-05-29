@@ -50,9 +50,12 @@ app = FastAPI(title="ClipOpus → Resizer")
 class JobRequest(BaseModel):
     video_url: str = Field(..., min_length=4)
     resolutions: list[str] = Field(default_factory=lambda: [rsz.DEFAULT_RES])
-    min_duration: Optional[int] = None   # сек, для curationPref
-    max_duration: Optional[int] = None
-    language: Optional[str] = None       # importPref.language
+    start_sec: Optional[int] = None      # окно исходника: с какой секунды
+    end_sec: Optional[int] = None        # ... по какую
+    clip_min: Optional[int] = None       # длина клипа, сек (нижняя граница)
+    clip_max: Optional[int] = None       # длина клипа, сек (верхняя граница)
+    min_score: Optional[int] = None      # порог virality-рейтинга 0..100
+    language: Optional[str] = None       # importPref.sourceLang
 
 
 # --- роуты -------------------------------------------------------------------
@@ -100,7 +103,9 @@ async def api_create_job(req: JobRequest):
         raise HTTPException(400, "Не выбрано ни одного разрешения")
 
     curation = _build_curation(req)
-    job = jobs_mod.store.create(req.video_url.strip(), req.resolutions, curation)
+    min_score = max(0, min(100, req.min_score)) if req.min_score else 0
+    job = jobs_mod.store.create(
+        req.video_url.strip(), req.resolutions, curation, min_score)
     asyncio.create_task(jobs_mod.run_job(job, opus, WEBHOOK_URL))
     return {"id": job.id, "status": job.status}
 
@@ -149,14 +154,22 @@ if STATIC_DIR.exists():
 
 
 def _build_curation(req: JobRequest) -> Optional[dict]:
+    """Собираем curationPref под реальный API OpusClip (range + clipDurations + lang)."""
     pref: dict = {}
-    if req.min_duration or req.max_duration:
+    # окно исходника: { startSec, endSec }
+    if req.start_sec is not None or req.end_sec is not None:
         rng: dict = {}
-        if req.min_duration:
-            rng["min"] = req.min_duration
-        if req.max_duration:
-            rng["max"] = req.max_duration
-        pref["clipDurationRange"] = rng
+        if req.start_sec is not None:
+            rng["startSec"] = max(0, req.start_sec)
+        if req.end_sec is not None:
+            rng["endSec"] = max(0, req.end_sec)
+        if rng:
+            pref["range"] = rng
+    # желаемая длина клипов: [[min, max]]
+    if req.clip_min is not None or req.clip_max is not None:
+        lo = max(0, req.clip_min) if req.clip_min is not None else 0
+        hi = req.clip_max if req.clip_max is not None else 90
+        pref["clipDurations"] = [[lo, hi]]
     return pref or None
 
 

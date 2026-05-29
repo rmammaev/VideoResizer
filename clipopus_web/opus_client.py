@@ -131,6 +131,19 @@ def clip_title(clip: dict, fallback: str = "clip") -> str:
     return fallback
 
 
+def clip_score(clip: dict) -> Optional[int]:
+    """Virality-рейтинг клипа 0..100 (поле score, подтверждено вживую)."""
+    for key in ("score", "viralityScore"):
+        v = clip.get(key)
+        if isinstance(v, (int, float)):
+            return int(v)
+    # запасной путь — judgeResult.curvedScore
+    jr = clip.get("judgeResult")
+    if isinstance(jr, dict) and isinstance(jr.get("curvedScore"), (int, float)):
+        return int(jr["curvedScore"])
+    return None
+
+
 def _as_list(data: Any) -> list[dict]:
     if isinstance(data, list):
         return data
