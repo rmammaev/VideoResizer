@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY clipopus_web/ .
 
 ENV PORT=8000
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
-CMD ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "echo \"[boot] starting uvicorn on port ${PORT:-8000}\" && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
