@@ -1,0 +1,8 @@
+# Фолбэк, если Railway собирает через Nixpacks, а не Dockerfile.
+# Главное — поставить ffmpeg (Nixpacks по умолчанию его не включает) и
+# запускать через `python -m uvicorn`, чтобы не зависеть от PATH.
+[phases.setup]
+aptPkgs = ["ffmpeg"]
+
+[start]
+cmd = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
