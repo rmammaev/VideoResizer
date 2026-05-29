@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipOpus → Resizer</title>
+<style>
+:root{
+  --bg:#0a0d14; --bg-elev:#11151f; --card:#171b27; --card-hover:#1f2433;
+  --border:#252a3a; --text:#e8eaf0; --muted:#9aa0b0; --dim:#5a6075;
+  --accent:#4f8cf7; --accent-hover:#6aa3ff; --violet:#a78bfa;
+  --success:#44d39a; --warn:#ffb02e; --danger:#ff6b6b; --log-bg:#06080d;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",Arial,sans-serif;
+  font-size:14px; line-height:1.5; display:flex; flex-direction:column;
+}
+header{
+  padding:16px 22px; border-bottom:1px solid var(--border);
+  background:var(--bg-elev); display:flex; align-items:center; gap:12px;
+}
+header .logo{font-size:18px;font-weight:700;letter-spacing:.3px}
+header .logo .v{color:var(--violet)} header .logo .a{color:var(--accent)}
+header .badge{font-size:11px;color:var(--muted);padding:3px 9px;border:1px solid var(--border);border-radius:20px}
+header .badge.bad{color:var(--danger);border-color:var(--danger)}
+header .badge.ok{color:var(--success);border-color:var(--success)}
+main{flex:1;overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:14px;max-width:860px;width:100%;margin:0 auto}
+.msg{display:flex;gap:11px;align-items:flex-start}
+.msg .av{width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:15px;background:var(--card)}
+.msg.bot .av{background:linear-gradient(135deg,var(--violet),var(--accent))}
+.msg.user{flex-direction:row-reverse}
+.bubble{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;max-width:78%}
+.msg.user .bubble{background:var(--accent-dim,#22386b);border-color:var(--accent)}
+.bubble h4{font-size:13px;margin-bottom:6px;color:var(--muted);font-weight:600}
+.log{background:var(--log-bg);border-radius:8px;padding:9px 11px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);max-height:200px;overflow-y:auto;white-space:pre-wrap;margin-top:8px}
+.bar{height:8px;border-radius:6px;background:var(--bg);overflow:hidden;margin-top:10px}
+.bar>div{height:100%;background:linear-gradient(90deg,var(--accent),var(--violet));width:0;transition:width .3s}
+.files{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.files a{color:var(--accent);text-decoration:none;font-size:13px;padding:7px 10px;background:var(--bg);border-radius:7px;display:flex;justify-content:space-between;align-items:center}
+.files a:hover{background:var(--card-hover)}
+.files a.zip{background:var(--success);color:#06120c;font-weight:600}
+.status-pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--muted);margin-top:4px}
+.status-pill.done{color:var(--success);border-color:var(--success)}
+.status-pill.error{color:var(--danger);border-color:var(--danger)}
+footer{border-top:1px solid var(--border);background:var(--bg-elev);padding:14px 22px}
+.composer{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.res-chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{padding:6px 12px;border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:12px;color:var(--muted);user-select:none}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.row{display:flex;gap:10px}
+input[type=text],input[type=number]{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--text);font-size:14px;outline:none}
+input:focus{border-color:var(--accent)}
+.dur{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--dim)}
+.dur input{width:80px;flex:none}
+button.send{background:var(--accent);border:none;color:#fff;font-weight:600;padding:0 22px;border-radius:10px;cursor:pointer;font-size:14px}
+button.send:hover{background:var(--accent-hover)}
+button.send:disabled{opacity:.5;cursor:not-allowed}
+.hint{font-size:11px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="v">Clip</span><span class="a">Opus</span> → Resizer</div>
+  <span id="cfgBadge" class="badge">проверка…</span>
+</header>
+
+<main id="chat">
+  <div class="msg bot">
+    <div class="av">🎬</div>
+    <div class="bubble">
+      Привет! Кинь ссылку на длинное видео (YouTube, Vimeo, Drive, прямой mp4…),
+      выбери форматы — я создам нарезку в OpusClip, скачаю клипы и подгоню под выбранные
+      разрешения.
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="composer">
+    <div class="res-chips" id="resChips"></div>
+    <div class="dur">
+      длительность клипа (сек, опц.):
+      <input type="number" id="minDur" placeholder="мин" min="0">
+      <input type="number" id="maxDur" placeholder="макс" min="0">
+    </div>
+    <div class="row">
+      <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off">
+      <button class="send" id="sendBtn">Создать</button>
+    </div>
+    <div class="hint">OpusClip тратит кредиты (1 кредит = 1 мин видео). Нарезка занимает несколько минут.</div>
+  </div>
+</footer>
+
+<script>
+const chat = document.getElementById('chat');
+const resChips = document.getElementById('resChips');
+const urlInput = document.getElementById('urlInput');
+const sendBtn = document.getElementById('sendBtn');
+const cfgBadge = document.getElementById('cfgBadge');
+let selected = new Set();
+
+function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
+function scroll(){chat.scrollTop = chat.scrollHeight;}
+
+function addUser(text){
+  chat.appendChild(el(`<div class="msg user"><div class="av">🧑</div><div class="bubble">${text}</div></div>`));
+  scroll();
+}
+function addBot(inner){
+  const node = el(`<div class="msg bot"><div class="av">🎬</div><div class="bubble">${inner}</div></div>`);
+  chat.appendChild(node); scroll();
+  return node.querySelector('.bubble');
+}
+
+// --- конфиг + чипы ---
+async function init(){
+  try{
+    const [cfg, res] = await Promise.all([
+      fetch('/api/config').then(r=>r.json()),
+      fetch('/api/resolutions').then(r=>r.json())
+    ]);
+    res.resolutions.forEach(r=>{
+      const c = el(`<div class="chip" data-r="${r}">${r}</div>`);
+      c.onclick = ()=>{ c.classList.toggle('on'); c.classList.contains('on')?selected.add(r):selected.delete(r); };
+      if(r===res.default){ c.classList.add('on'); selected.add(r); }
+      resChips.appendChild(c);
+    });
+    const problems = [];
+    if(!cfg.has_key) problems.push('нет OPUS_API_KEY');
+    if(!cfg.has_org) problems.push('нет OPUS_ORG_ID');
+    if(!cfg.ffmpeg) problems.push('нет ffmpeg');
+    if(problems.length){ cfgBadge.textContent = problems.join(' · '); cfgBadge.className='badge bad'; }
+    else { cfgBadge.textContent = cfg.webhook_enabled ? 'готов · webhook' : 'готов · polling'; cfgBadge.className='badge ok'; }
+  }catch(e){ cfgBadge.textContent='сервер недоступен'; cfgBadge.className='badge bad'; }
+}
+
+// --- запуск job ---
+async function send(){
+  const url = urlInput.value.trim();
+  if(!url){ urlInput.focus(); return; }
+  if(selected.size===0){ alert('Выбери хотя бы одно разрешение'); return; }
+  const resolutions = [...selected];
+  addUser(`${url}<br><span style="font-size:11px;opacity:.7">${resolutions.join(', ')}</span>`);
+  urlInput.value=''; sendBtn.disabled=true;
+
+  const body = { video_url:url, resolutions };
+  const minD = parseInt(document.getElementById('minDur').value); if(minD>0) body.min_duration=minD;
+  const maxD = parseInt(document.getElementById('maxDur').value); if(maxD>0) body.max_duration=maxD;
+
+  let resp;
+  try{ resp = await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+  catch(e){ addBot(`<span style="color:var(--danger)">Сеть недоступна: ${e}</span>`); sendBtn.disabled=false; return; }
+  if(!resp.ok){
+    const err = await resp.json().catch(()=>({detail:resp.statusText}));
+    addBot(`<span style="color:var(--danger)">Ошибка: ${err.detail||resp.statusText}</span>`); sendBtn.disabled=false; return;
+  }
+  const {id} = await resp.json();
+  const bubble = addBot(`
+    <span class="status-pill" data-pill>создаём проект…</span>
+    <div class="bar"><div data-bar></div></div>
+    <div class="log" data-log></div>
+    <div class="files" data-files></div>`);
+  poll(id, bubble);
+}
+
+const STATUS_RU = {queued:'в очереди',creating:'создаём проект',clipping:'OpusClip режет видео…',
+  downloading:'скачиваем клипы',resizing:'ресайз',done:'готово',error:'ошибка',stopped:'остановлено'};
+
+async function poll(id, bubble){
+  const pill = bubble.querySelector('[data-pill]');
+  const bar  = bubble.querySelector('[data-bar]');
+  const logEl= bubble.querySelector('[data-log]');
+  const filesEl = bubble.querySelector('[data-files]');
+  try{
+    const j = await fetch('/api/jobs/'+id).then(r=>r.json());
+    pill.textContent = STATUS_RU[j.status] || j.status;
+    pill.className = 'status-pill' + (j.status==='done'?' done':j.status==='error'?' error':'');
+    bar.style.width = (j.progress||0) + '%';
+    logEl.textContent = (j.log||[]).join('\n');
+    logEl.scrollTop = logEl.scrollHeight;
+
+    if(j.status==='done'){
+      let html = '';
+      if(j.bundle) html += `<a class="zip" href="/files/${j.bundle}">⬇︎ Скачать всё (zip)</a>`;
+      (j.outputs||[]).forEach(o=> html += `<a href="/files/${o.file}"><span>${o.name}</span><span>⬇︎</span></a>`);
+      filesEl.innerHTML = html;
+      sendBtn.disabled=false; return;
+    }
+    if(j.status==='error'){ pill.textContent = 'ошибка: '+(j.error||''); sendBtn.disabled=false; return; }
+    if(j.status==='stopped'){ sendBtn.disabled=false; return; }
+    setTimeout(()=>poll(id,bubble), 2500);
+  }catch(e){ setTimeout(()=>poll(id,bubble), 4000); }
+}
+
+sendBtn.onclick = send;
+urlInput.addEventListener('keydown', e=>{ if(e.key==='Enter') send(); });
+init();
+</script>
+</body>
+</html>
