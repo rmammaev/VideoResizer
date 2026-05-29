@@ -62,8 +62,9 @@ class Job:
     def dir(self) -> Path:
         return DATA_DIR / self.id
 
-    def add_log(self, msg: str):
-        self.log.append(msg)
+    def add_log(self, msg: str, level: str = "info"):
+        prefix = {"warn": "⚠ ", "error": "✗ "}.get(level, "")
+        self.log.append(prefix + msg)
         # не даём логу разрастаться бесконечно
         if len(self.log) > 500:
             self.log = self.log[-500:]
