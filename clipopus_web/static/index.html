@@ -130,8 +130,8 @@ async function init(){
     });
     const problems = [];
     if(!cfg.has_key) problems.push('нет OPUS_API_KEY');
-    if(!cfg.has_org) problems.push('нет OPUS_ORG_ID');
     if(!cfg.ffmpeg) problems.push('нет ffmpeg');
+    // OPUS_ORG_ID опционален — API работает и без него, поэтому не флагуем
     if(problems.length){ cfgBadge.textContent = problems.join(' · '); cfgBadge.className='badge bad'; }
     else { cfgBadge.textContent = cfg.webhook_enabled ? 'готов · webhook' : 'готов · polling'; cfgBadge.className='badge ok'; }
   }catch(e){ cfgBadge.textContent='сервер недоступен'; cfgBadge.className='badge bad'; }
