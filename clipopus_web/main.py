@@ -64,6 +64,11 @@ async def index():
     return FileResponse(idx)
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
+
 @app.get("/api/resolutions")
 async def api_resolutions():
     return {"resolutions": list(rsz.RESOLUTIONS.keys()), "default": rsz.DEFAULT_RES}
