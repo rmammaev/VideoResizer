@@ -1,0 +1,17 @@
+# Не тащим в build-контекст лишнее (десктоп-приложение, сборки, медиа)
+.git
+.venv
+clipopus_web/.venv
+clipopus_web/data
+clipopus_web/.env
+dist
+Windows
+build
+*.icns
+*.png
+*.docx
+__pycache__
+*.pyc
+app.py
+VideoResizer.spec
+setup_and_run.command
