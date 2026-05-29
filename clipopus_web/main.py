@@ -45,6 +45,9 @@ WEBHOOK_URL = f"{PUBLIC_BASE_URL.rstrip('/')}/api/opus-webhook" if PUBLIC_BASE_U
 
 app = FastAPI(title="ClipOpus → Resizer")
 
+# Порог virality-рейтинга по умолчанию: качаем только клипы с score >= этого значения.
+DEFAULT_MIN_SCORE = 85
+
 
 # --- модели запросов ---------------------------------------------------------
 class JobRequest(BaseModel):
@@ -103,7 +106,9 @@ async def api_create_job(req: JobRequest):
         raise HTTPException(400, "Не выбрано ни одного разрешения")
 
     curation = _build_curation(req)
-    min_score = max(0, min(100, req.min_score)) if req.min_score else 0
+    # Дефолтный порог рейтинга: берём только клипы с score >= 85.
+    raw_score = req.min_score if req.min_score is not None else DEFAULT_MIN_SCORE
+    min_score = max(0, min(100, raw_score))
     job = jobs_mod.store.create(
         req.video_url.strip(), req.resolutions, curation, min_score)
     asyncio.create_task(jobs_mod.run_job(job, opus, WEBHOOK_URL))

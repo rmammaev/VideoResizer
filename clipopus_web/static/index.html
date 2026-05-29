@@ -85,8 +85,7 @@ button.send:disabled{opacity:.5;cursor:not-allowed}
       <span>тайминг исходника (опц.):</span>
       <input type="text" id="startT" placeholder="с  1:46" >
       <input type="text" id="endT" placeholder="по  3:24" >
-      <span style="margin-left:10px">рейтинг ≥</span>
-      <input type="number" id="minScore" placeholder="напр. 90" min="0" max="100">
+      <span class="hint" style="margin-left:10px">берём только клипы с рейтингом ≥ 85</span>
     </div>
     <div class="dur">
       <span>длина клипа, сек (опц.):</span>
@@ -168,7 +167,6 @@ async function send(){
   const endS   = parseTime(document.getElementById('endT').value);   if(endS!==null)   body.end_sec=endS;
   const minD = parseInt(document.getElementById('minDur').value); if(minD>0) body.clip_min=minD;
   const maxD = parseInt(document.getElementById('maxDur').value); if(maxD>0) body.clip_max=maxD;
-  const ms   = parseInt(document.getElementById('minScore').value); if(ms>0) body.min_score=ms;
 
   let resp;
   try{ resp = await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
