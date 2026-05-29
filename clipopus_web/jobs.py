@@ -249,6 +249,45 @@ async def _download(client: httpx.AsyncClient, url: str, dst: Path):
                 fh.write(chunk)
 
 
+async def add_formats(job: Job, resolutions: list[str]):
+    """
+    Догенерировать доп. форматы из уже СКАЧАННОГО клипа (без перезапуска OpusClip).
+    Берём исходники из job.dir/src и ресайзим в новые разрешения.
+    """
+    src_dir = job.dir / "src"
+    out_dir = job.dir / "out"
+    srcs = sorted(src_dir.glob("*.mp4")) + sorted(src_dir.glob("*.mkv"))
+    if not srcs:
+        job.add_log("Нет скачанного исходника для доресайза (возможно, контейнер перезапускался)", "warn")
+        return
+    want = [r for r in resolutions if r in rsz.RESOLUTIONS]
+    if not want:
+        return
+
+    job.status = "resizing"
+    for src in srcs:
+        for res_key in want:
+            if job._stop:
+                job.status = "stopped"
+                return
+            out_name = f"{src.stem}_{res_key}"
+            if (out_dir / f"{out_name}.mp4").exists():
+                continue  # такой формат уже есть — пропускаем
+            job.add_log(f"Доресайз {src.stem} → {res_key}")
+            try:
+                dst = await asyncio.to_thread(
+                    rsz.resize_file, src, res_key, out_dir,
+                    out_name=out_name, stop_check=lambda: job._stop)
+            except Exception as e:  # noqa: BLE001
+                job.add_log(f"не удалось {res_key}: {e}", "error")
+                continue
+            job.outputs.append({"name": dst.name, "file": str(dst.relative_to(DATA_DIR))})
+
+    _bundle_zip(job)
+    job.status = "done"
+    job.add_log("✓ Доп. форматы готовы")
+
+
 def _bundle_zip(job: Job):
     if not job.outputs:
         return

@@ -128,6 +128,27 @@ async def api_job_status(job_id: str):
     return job.to_dict()
 
 
+class AddFormatsRequest(BaseModel):
+    resolutions: list[str]
+
+
+@app.post("/api/jobs/{job_id}/add_formats")
+async def api_add_formats(job_id: str, req: AddFormatsRequest):
+    job = jobs_mod.store.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job не найден")
+    if job.status not in ("done", "stopped", "error"):
+        raise HTTPException(409, "Дождись завершения текущей обработки")
+    bad = [r for r in req.resolutions if r not in rsz.RESOLUTIONS]
+    if bad:
+        raise HTTPException(400, f"Неизвестные разрешения: {bad}")
+    if not req.resolutions:
+        raise HTTPException(400, "Не выбрано ни одного формата")
+    job._stop = False
+    asyncio.create_task(jobs_mod.add_formats(job, req.resolutions))
+    return {"ok": True}
+
+
 @app.post("/api/jobs/{job_id}/stop")
 async def api_job_stop(job_id: str):
     job = jobs_mod.store.get(job_id)

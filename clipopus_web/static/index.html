@@ -114,6 +114,7 @@ const urlInput = document.getElementById('urlInput');
 const sendBtn = document.getElementById('sendBtn');
 const cfgBadge = document.getElementById('cfgBadge');
 let selected = new Set();
+let ALL_RES = [];
 
 function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
 function scroll(){chat.scrollTop = chat.scrollHeight;}
@@ -145,6 +146,7 @@ async function init(){
       fetch('/api/config').then(r=>r.json()),
       fetch('/api/resolutions').then(r=>r.json())
     ]);
+    ALL_RES = res.resolutions;
     res.resolutions.forEach(r=>{
       const c = el(`<div class="chip" data-r="${r}">${r}</div>`);
       c.onclick = ()=>{ c.classList.toggle('on'); c.classList.contains('on')?selected.add(r):selected.delete(r); };
@@ -195,6 +197,44 @@ async function send(){
   poll(id, bubble);
 }
 
+const RES_LABEL = {'1080x1080':'1:1','1080x1350':'4:5','1080x1920':'9:16','1920x1080':'16:9'};
+
+// Блок «добавить форматы» под готовым клипом — ресайз из уже скачанного, без OpusClip.
+function renderAddFormats(jobId, bubble, filesEl, j){
+  if(bubble.querySelector('.addfmt')) return;  // уже отрисован
+  const have = new Set((j.outputs||[]).map(o=>{
+    const m = o.name.match(/(\d+x\d+)\.mp4$/); return m ? m[1] : null;
+  }).filter(Boolean));
+  const missing = ALL_RES.filter(r=>!have.has(r));
+  if(!missing.length) return;
+
+  const box = el(`<div class="addfmt" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+    <div class="hint" style="margin-bottom:7px">Сделать из этого клипа ещё форматы (без OpusClip, бесплатно):</div>
+    <div class="res-chips" data-chips></div>
+    <button class="send" data-add style="margin-top:9px;height:34px;font-size:13px">Добавить форматы</button>
+  </div>`);
+  const chipsEl = box.querySelector('[data-chips]');
+  const sel = new Set();
+  missing.forEach(r=>{
+    const c = el(`<div class="chip" data-r="${r}">${r} · ${RES_LABEL[r]||''}</div>`);
+    c.onclick = ()=>{ c.classList.toggle('on'); c.classList.contains('on')?sel.add(r):sel.delete(r); };
+    chipsEl.appendChild(c);
+  });
+  const btn = box.querySelector('[data-add]');
+  btn.onclick = async ()=>{
+    if(!sel.size){ alert('Выбери форматы'); return; }
+    btn.disabled=true; btn.textContent='Обрабатываю…';
+    try{
+      const r = await fetch(`/api/jobs/${jobId}/add_formats`,{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({resolutions:[...sel]})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); alert('Ошибка: '+(e.detail||r.statusText)); btn.disabled=false; btn.textContent='Добавить форматы'; return; }
+      box.remove();
+      poll(jobId, bubble);   // снова поллим — статус уйдёт в resizing, потом done с новыми файлами
+    }catch(e){ alert('Сеть: '+e); btn.disabled=false; btn.textContent='Добавить форматы'; }
+  };
+  filesEl.after(box);
+}
+
 const STATUS_RU = {queued:'в очереди',creating:'создаём проект',clipping:'OpusClip режет видео…',
   downloading:'скачиваем клипы',resizing:'ресайз',done:'готово',error:'ошибка',stopped:'остановлено'};
 
@@ -213,9 +253,10 @@ async function poll(id, bubble){
 
     if(j.status==='done'){
       let html = '';
-      if(j.bundle) html += `<a class="zip" href="/files/${j.bundle}">⬇︎ Скачать всё (zip)</a>`;
+      if(j.bundle) html += `<a class="zip" href="/files/${j.bundle}?t=${Date.now()}">⬇︎ Скачать всё (zip)</a>`;
       (j.outputs||[]).forEach(o=> html += `<a href="/files/${o.file}"><span>${o.name}</span><span>⬇︎</span></a>`);
       filesEl.innerHTML = html;
+      renderAddFormats(id, bubble, filesEl, j);
       sendBtn.disabled=false; return;
     }
     if(j.status==='error'){ pill.textContent = 'ошибка: '+(j.error||''); sendBtn.disabled=false; return; }
