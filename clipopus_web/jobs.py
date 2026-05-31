@@ -249,6 +249,61 @@ async def _download(client: httpx.AsyncClient, url: str, dst: Path):
                 fh.write(chunk)
 
 
+async def run_resize_job(job: Job, files: list[Path]):
+    """Локальный ресайз загруженных файлов в выбранные разрешения (без OpusClip)."""
+    try:
+        out_dir = job.dir / "out"
+        total = max(1, len(files) * len(job.resolutions))
+        done = 0
+        job.status = "resizing"
+        for f in files:
+            for res_key in job.resolutions:
+                if job._stop:
+                    job.status = "stopped"
+                    return
+                job.add_log(f"{Path(f).name} → {res_key}")
+                dst = await asyncio.to_thread(
+                    rsz.resize_file, f, res_key, out_dir,
+                    out_name=f"{Path(f).stem}_{res_key}",
+                    stop_check=lambda: job._stop)
+                job.outputs.append({"name": dst.name, "file": str(dst.relative_to(DATA_DIR))})
+                done += 1
+                job.progress = int(done * 100 / total)
+        _bundle_zip(job)
+        job.status = "done"
+        job.add_log("✓ Готово")
+    except Exception as e:  # noqa: BLE001
+        job.status = "error"; job.error = str(e); job.add_log(f"Ошибка: {e}", "error")
+
+
+async def run_concat_job(job: Job, files: list[Path], fade: bool):
+    """Склейка загруженных файлов в один (для каждого выбранного разрешения)."""
+    try:
+        if len(files) < 2:
+            raise RuntimeError("Нужно минимум 2 файла")
+        out_dir = job.dir / "out"
+        total = max(1, len(job.resolutions))
+        job.status = "resizing"
+        for i, res_key in enumerate(job.resolutions):
+            if job._stop:
+                job.status = "stopped"
+                return
+            job.add_log(f"Склейка {len(files)} файлов → {res_key}"
+                        + (" (с переходом)" if fade else ""))
+            dst = await asyncio.to_thread(
+                rsz.concat_files, files, res_key, out_dir,
+                fade=fade, out_name=f"concat_{res_key}",
+                progress_cb=lambda p: setattr(job, "progress", p),
+                stop_check=lambda: job._stop)
+            job.outputs.append({"name": dst.name, "file": str(dst.relative_to(DATA_DIR))})
+            job.progress = int((i + 1) * 100 / total)
+        _bundle_zip(job)
+        job.status = "done"
+        job.add_log("✓ Готово")
+    except Exception as e:  # noqa: BLE001
+        job.status = "error"; job.error = str(e); job.add_log(f"Ошибка: {e}", "error")
+
+
 async def add_formats(job: Job, resolutions: list[str]):
     """
     Догенерировать доп. форматы из уже СКАЧАННОГО клипа (без перезапуска OpusClip).

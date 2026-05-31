@@ -30,6 +30,7 @@ VIDEO_CRF = "18"
 AUDIO_CODEC = "aac"
 AUDIO_BITRATE = "192k"
 PIX_FMT = "yuv420p"
+FADE_DURATION = 0.5
 
 
 def have_ffmpeg() -> bool:
@@ -76,6 +77,120 @@ def _build_filter_resize_only(target_w, target_h, src_has_audio):
     if src_has_audio:
         maps += ["-map", "0:a"]
     return fc, maps
+
+
+def _fc_audio_chunk(in_label, out_label, has_audio):
+    if has_audio:
+        return (f"{in_label}aresample=async=1,"
+                f"aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo{out_label}")
+    return f"anullsrc=channel_layout=stereo:sample_rate=44100{out_label}"
+
+
+def _build_filter_concat_simple(n_inputs, target_w, target_h, has_audios):
+    parts = []
+    for i in range(n_inputs):
+        parts.append(_fc_resize_chunk(f"[{i}:v]", f"[v{i}]", target_w, target_h, f"c{i}"))
+        parts.append(_fc_audio_chunk(f"[{i}:a]", f"[a{i}]", has_audios[i]))
+    chain = "".join(f"[v{i}][a{i}]" for i in range(n_inputs))
+    parts.append(f"{chain}concat=n={n_inputs}:v=1:a=1[v][a]")
+    return ";".join(parts), ["-map", "[v]", "-map", "[a]"]
+
+
+def _build_filter_concat_xfade(n_inputs, target_w, target_h, has_audios, durations,
+                               fade_dur=FADE_DURATION):
+    parts = []
+    for i in range(n_inputs):
+        parts.append(_fc_resize_chunk(f"[{i}:v]", f"[v{i}]", target_w, target_h, f"c{i}"))
+        parts.append(_fc_audio_chunk(f"[{i}:a]", f"[a{i}]", has_audios[i]))
+    cur_v, cur_a = "v0", "a0"
+    cur_dur = durations[0]
+    for i in range(1, n_inputs):
+        new_v, new_a = f"vx{i}", f"ax{i}"
+        offset = max(0.0, cur_dur - fade_dur)
+        parts.append(f"[{cur_v}][v{i}]xfade=transition=fade:"
+                     f"duration={fade_dur:.3f}:offset={offset:.3f}[{new_v}]")
+        parts.append(f"[{cur_a}][a{i}]acrossfade=d={fade_dur:.3f}:c1=tri:c2=tri[{new_a}]")
+        cur_dur = cur_dur + durations[i] - fade_dur
+        cur_v, cur_a = new_v, new_a
+    parts.append(f"[{cur_v}]setsar=1[v]")
+    parts.append(f"[{cur_a}]anull[a]")
+    return ";".join(parts), ["-map", "[v]", "-map", "[a]"]
+
+
+def concat_files(
+    files: list,
+    res_key: str,
+    out_dir: Path,
+    *,
+    fade: bool = False,
+    out_name: Optional[str] = None,
+    progress_cb: Optional[Callable[[int], None]] = None,
+    stop_check: Optional[Callable[[], bool]] = None,
+) -> Path:
+    """Склейка нескольких видео в одно (с ресайзом каждого в res_key). fade=плавный переход."""
+    if res_key not in RESOLUTIONS:
+        raise ValueError(f"Неизвестное разрешение: {res_key}")
+    files = [Path(f) for f in files]
+    if len(files) < 2:
+        raise ValueError("Для склейки нужно минимум 2 файла")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target_w, target_h = RESOLUTIONS[res_key]
+
+    infos = [ffprobe_info(f) for f in files]
+    has_audios = [i["has_audio"] for i in infos]
+    durations = [max(0.05, i["duration"]) for i in infos]
+    n = len(files)
+
+    if fade and n >= 2:
+        fc, maps = _build_filter_concat_xfade(n, target_w, target_h, has_audios, durations)
+        total_dur = sum(durations) - FADE_DURATION * (n - 1)
+    else:
+        fc, maps = _build_filter_concat_simple(n, target_w, target_h, has_audios)
+        total_dur = sum(durations)
+    total_us = max(1, int(total_dur * 1_000_000))
+
+    stem = out_name or f"concat_{res_key}"
+    dst = _unique_path(out_dir / f"{stem}.mp4")
+
+    cmd = ["ffmpeg", "-y"]
+    for f in files:
+        cmd += ["-i", str(f)]
+    cmd += ["-filter_complex", fc, *maps,
+            "-c:v", VIDEO_CODEC, "-preset", VIDEO_PRESET, "-crf", VIDEO_CRF,
+            "-pix_fmt", PIX_FMT, "-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE,
+            "-movflags", "+faststart",
+            "-progress", "pipe:1", "-nostats", "-loglevel", "error",
+            str(dst)]
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    rx_time = re.compile(r"^out_time_us=(-?\d+)$")
+    last = -1
+    try:
+        for line in proc.stdout:
+            if stop_check and stop_check():
+                proc.terminate()
+                try: proc.wait(timeout=2)
+                except subprocess.TimeoutExpired: proc.kill()
+                raise InterruptedError("Остановлено")
+            line = line.strip()
+            m = rx_time.match(line)
+            if m and progress_cb:
+                pct = int(min(100, max(0, int(m.group(1))) * 100 / total_us))
+                if pct != last:
+                    last = pct
+                    progress_cb(pct)
+    finally:
+        err = proc.stderr.read() if proc.stderr else ""
+        rc = proc.wait()
+    if rc != 0:
+        try:
+            if dst.exists(): dst.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"ffmpeg concat rc={rc}: {err.strip()[:300]}")
+    return dst
 
 
 def resize_file(

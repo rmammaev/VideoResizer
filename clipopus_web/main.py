@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -167,6 +168,66 @@ async def api_opus_webhook(request: Request, job: Optional[str] = None):
             j.add_log("← Webhook от OpusClip: нарезка завершена")
             j.notify_clips_ready()
     return {"ok": True}
+
+
+async def _save_uploads(job, files: list[UploadFile]) -> list[Path]:
+    up = job.dir / "upload"
+    up.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    for idx, uf in enumerate(files):
+        safe = re.sub(r"[^\w.\- ]", "_", (uf.filename or f"file{idx}"))[:80]
+        dst = up / f"{idx:02d}_{safe}"
+        with open(dst, "wb") as fh:
+            while True:
+                chunk = await uf.read(1 << 20)
+                if not chunk:
+                    break
+                fh.write(chunk)
+        saved.append(dst)
+    return saved
+
+
+def _parse_resolutions(resolutions: str) -> list[str]:
+    res = [r.strip() for r in (resolutions or "").split(",") if r.strip()]
+    bad = [r for r in res if r not in rsz.RESOLUTIONS]
+    if bad:
+        raise HTTPException(400, f"Неизвестные разрешения: {bad}")
+    if not res:
+        raise HTTPException(400, "Не выбрано ни одного формата")
+    return res
+
+
+@app.post("/api/resize")
+async def api_resize(
+    files: list[UploadFile] = File(...),
+    resolutions: str = Form(...),
+):
+    if not rsz.have_ffmpeg():
+        raise HTTPException(500, "ffmpeg не найден")
+    res = _parse_resolutions(resolutions)
+    if not files:
+        raise HTTPException(400, "Не загружено ни одного файла")
+    job = jobs_mod.store.create("upload", res)
+    saved = await _save_uploads(job, files)
+    asyncio.create_task(jobs_mod.run_resize_job(job, saved))
+    return {"id": job.id, "status": job.status}
+
+
+@app.post("/api/concat")
+async def api_concat(
+    files: list[UploadFile] = File(...),
+    resolutions: str = Form(...),
+    fade: bool = Form(False),
+):
+    if not rsz.have_ffmpeg():
+        raise HTTPException(500, "ffmpeg не найден")
+    res = _parse_resolutions(resolutions)
+    if not files or len(files) < 2:
+        raise HTTPException(400, "Для склейки нужно минимум 2 файла")
+    job = jobs_mod.store.create("upload", res)
+    saved = await _save_uploads(job, files)
+    asyncio.create_task(jobs_mod.run_concat_job(job, saved, fade))
+    return {"id": job.id, "status": job.status}
 
 
 @app.get("/files/{file_path:path}")
