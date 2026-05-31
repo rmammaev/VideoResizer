@@ -147,6 +147,7 @@ nav.tabs button.active{background:var(--card);color:var(--text);border-color:var
 <div class="panel" id="panel-resize" hidden>
   <h3>🖼️ Ресайз</h3>
   <div class="hint">Файлы по ориентации исходника → нужные форматы (blur-fit). Опционально — пекшот-концовка в конец каждого ролика. Без OpusClip.</div>
+  <div id="rzNaming"></div>
   <div id="rzGroups"></div>
   <button class="send" id="rzBtn" style="height:42px;align-self:flex-start">▶ СТАРТ</button>
   <div id="rzProgress"></div>
@@ -160,7 +161,8 @@ nav.tabs button.active{background:var(--card);color:var(--text);border-color:var
     <span class="res-chips" id="ccChips" style="display:inline-flex"></span>
     <button class="iconbtn" id="ccAdd" style="margin-left:auto">+ Клип</button>
   </div>
-  <div class="hint">Перетащи порт <b style="color:var(--violet)">OUT</b> (справа) на порт <b style="color:var(--violet)">IN</b> (слева) другого клипа — задаёшь порядок. Голова цепочки = клип без входящей связи.</div>
+  <div class="hint">Перетащи порт <b style="color:var(--violet)">OUT</b> (справа) на порт <b style="color:var(--violet)">IN</b> (слева) другого клипа — задаёшь порядок. Голова цепочки = клип без входящей связи. Трим (с/по) у каждого клипа — в его карточке.</div>
+  <div id="ccNaming"></div>
   <div class="cc-canvas" id="ccCanvas"><svg id="ccEdges"></svg></div>
   <button class="send" id="ccBtn" style="height:42px;align-self:flex-start">▶ СКЛЕИТЬ</button>
   <div id="ccProgress"></div>
@@ -371,6 +373,42 @@ async function pollUpload(id, card){
   }catch(e){ setTimeout(()=>pollUpload(id,card), 3500); }
 }
 
+// ===== Контрол имён (общий для Ресайза и Склейки) =====
+const NAME_TEAMS = ["In-House","Freelance"];
+const NAME_TYPES = ["Gameplay","Unreal","Cinematic","Combo","UGC","AI","AI-Hook"];
+function buildNaming(containerId, defaultTemplate){
+  const cont=document.getElementById(containerId); if(!cont) return ()=>({mode:'keep'});
+  const box=el(`<div class="card" style="margin-top:0">
+    <div class="dur" style="flex-wrap:wrap">
+      <span>имена файлов:</span>
+      <select data-mode class="iconbtn"><option value="keep">как исходник</option><option value="custom">шаблон</option><option value="os">OS-конвенция</option></select>
+      <span data-custom style="display:none">шаблон <input type="text" data-tpl value="${defaultTemplate}" style="width:210px"> тег <input type="text" data-tag placeholder="опц." style="width:90px"></span>
+      <span data-os style="display:none">
+        команда <select data-team class="iconbtn">${NAME_TEAMS.map(t=>`<option>${t}</option>`).join('')}</select>
+        тип <select data-type class="iconbtn">${NAME_TYPES.map(t=>`<option>${t}</option>`).join('')}</select>
+        имя <select data-namesrc class="iconbtn"><option value="auto">авто</option><option value="manual">вручную</option></select>
+        <input type="text" data-manual placeholder="имя" style="width:120px">
+      </span>
+    </div>
+    <div class="hint" data-tok style="display:none;margin-top:6px">токены: {name} {tag} {resolution} {date} {index}</div>
+  </div>`);
+  const mode=box.querySelector('[data-mode]'), cu=box.querySelector('[data-custom]'),
+        os=box.querySelector('[data-os]'), tok=box.querySelector('[data-tok]');
+  function upd(){ cu.style.display=mode.value==='custom'?'':'none'; os.style.display=mode.value==='os'?'':'none'; tok.style.display=mode.value==='custom'?'':'none'; }
+  mode.onchange=upd; upd();
+  cont.innerHTML=''; cont.appendChild(box);
+  return ()=>({
+    mode: mode.value,
+    template: box.querySelector('[data-tpl]').value,
+    tag: box.querySelector('[data-tag]').value,
+    team: box.querySelector('[data-team]').value,
+    type: box.querySelector('[data-type]').value,
+    name_source: box.querySelector('[data-namesrc]').value,
+    name_manual: box.querySelector('[data-manual]').value,
+  });
+}
+let rzNamingGet=()=>({mode:'keep'}), ccNamingGet=()=>({mode:'custom',template:'concat_{date}_{resolution}'});
+
 // ===== РЕСАЙЗ: группы по ориентации + пекшоты =====
 const SLOT_DEFS = [
   {id:'sq',   label:'1:1 → 1080×1080 + 1080×1350', hint:'квадратный исходник',  outputs:['1080x1080','1080x1350']},
@@ -379,6 +417,7 @@ const SLOT_DEFS = [
 ];
 const rzGroups = {};  // id -> {files:[], packshot:File|null, sel:Set}
 function setupResizeGroups(){
+  rzNamingGet = buildNaming('rzNaming', '{name}_{resolution}');
   const root = document.getElementById('rzGroups'); root.innerHTML='';
   SLOT_DEFS.forEach(def=>{
     const g = {files:[], packshot:null, sel:new Set(def.outputs)};
@@ -398,8 +437,10 @@ function setupResizeGroups(){
       chips.appendChild(c);
     });
     const fi=card.querySelector('[data-files]'), list=card.querySelector('[data-list]');
+    g.listEl=list;
     fi.addEventListener('change',()=>{ g.files=[...fi.files]; list.innerHTML='';
-      g.files.forEach((f,i)=>list.appendChild(el(`<div class="f"><span>${i+1}. ${f.name}</span><span>${(f.size/1048576).toFixed(1)} МБ</span></div>`))); });
+      g.files.forEach((f,i)=>list.appendChild(el(`<div class="f"><span>${i+1}. ${f.name}</span>
+        <span>трим <input type="text" data-ts placeholder="с" style="width:56px;padding:4px 6px"> <input type="text" data-te placeholder="по" style="width:56px;padding:4px 6px"></span></div>`))); });
     const pk=card.querySelector('[data-pack]'), pn=card.querySelector('[data-packname]');
     pk.addEventListener('change',()=>{ g.packshot=pk.files[0]||null; pn.textContent=g.packshot?('пекшот: '+g.packshot.name):''; });
     root.appendChild(card);
@@ -418,6 +459,11 @@ document.getElementById('rzBtn').onclick=async()=>{
       g.files.forEach(f=>fd.append('files',f));
       fd.append('resolutions',[...g.sel].join(','));
       if(g.packshot) fd.append('packshot', g.packshot);
+      fd.append('naming', JSON.stringify(rzNamingGet()));
+      const rows=[...g.listEl.querySelectorAll('.f')];
+      fd.append('trims', JSON.stringify(rows.map(r=>({
+        start: parseTime(r.querySelector('[data-ts]').value),
+        end: parseTime(r.querySelector('[data-te]').value)}))));
       const card=newProgressCard(cont, def.label);
       const r=await fetch('/api/resize',{method:'POST',body:fd});
       if(!r.ok){ const e=await r.json().catch(()=>({})); card.querySelector('[data-pill]').textContent='ошибка: '+(e.detail||r.statusText); continue; }
@@ -430,6 +476,7 @@ document.getElementById('rzBtn').onclick=async()=>{
 const ccSel = new Set();
 const cc = {nodes:{}, edges:[], next:1, dragNode:null, linkFrom:null};
 function setupConcat(){
+  ccNamingGet = buildNaming('ccNaming', 'concat_{date}_{resolution}');
   const chips=document.getElementById('ccChips');
   ALL_RES.forEach(r=>{
     const c=el(`<div class="chip" data-r="${r}">${RES_LABEL[r]||r}</div>`);
@@ -451,7 +498,11 @@ function addNode(file){
     <div class="cc-port in" data-port="in"></div>
     <div class="cc-port out" data-port="out"></div>
     <div class="cc-head"><span class="cc-num"></span><span class="cc-name">${file.name}</span><span class="cc-close">×</span></div>
-    <div class="cc-body">${(file.size/1048576).toFixed(1)} МБ</div>
+    <div class="cc-body">${(file.size/1048576).toFixed(1)} МБ
+      <div style="display:flex;gap:5px;margin-top:5px">трим
+        <input type="text" data-ts placeholder="с" style="width:48px;padding:3px 5px;font-size:11px">
+        <input type="text" data-te placeholder="по" style="width:48px;padding:3px 5px;font-size:11px"></div>
+    </div>
   </div>`);
   node.querySelector('.cc-close').onclick=(e)=>{ e.stopPropagation();
     delete cc.nodes[id]; cc.edges=cc.edges.filter(ed=>ed.from!==id&&ed.to!==id); node.remove(); redrawEdges(); };
@@ -537,6 +588,12 @@ document.getElementById('ccBtn').onclick=async()=>{
     order.forEach(id=>fd.append('files', cc.nodes[id].file));
     fd.append('resolutions',[...ccSel].join(','));
     fd.append('fade', document.getElementById('ccFade').checked?'true':'false');
+    fd.append('naming', JSON.stringify(ccNamingGet()));
+    fd.append('trims', JSON.stringify(order.map(id=>{
+      const node=document.querySelector(`.cc-node[data-id="${id}"]`);
+      return {start:parseTime(node.querySelector('[data-ts]').value),
+              end:parseTime(node.querySelector('[data-te]').value)};
+    })));
     const card=newProgressCard(cont, 'Склейка '+order.length+' клипов · '+[...ccSel].map(r=>RES_LABEL[r]).join(', '));
     const r=await fetch('/api/concat',{method:'POST',body:fd});
     if(!r.ok){ const e=await r.json().catch(()=>({})); card.querySelector('[data-pill]').textContent='ошибка: '+(e.detail||r.statusText); return; }

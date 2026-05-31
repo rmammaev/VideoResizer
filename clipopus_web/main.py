@@ -14,6 +14,7 @@ FastAPI-сервис: веб-страница ClipOpus → Resizer.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from pathlib import Path
@@ -32,7 +33,17 @@ except ImportError:
 
 import jobs as jobs_mod
 import resize as rsz
+from naming import NamingConfig, DEFAULT_TEMPLATE_RESIZE, DEFAULT_TEMPLATE_CONCAT
 from opus_client import OpusClient
+
+
+def _parse_json_form(s: Optional[str], default):
+    if not s:
+        return default
+    try:
+        return json.loads(s)
+    except (ValueError, TypeError):
+        return default
 
 HERE = Path(__file__).parent
 STATIC_DIR = HERE / "static"
@@ -202,6 +213,8 @@ async def api_resize(
     files: list[UploadFile] = File(...),
     resolutions: str = Form(...),
     packshot: Optional[UploadFile] = File(None),
+    naming: Optional[str] = Form(None),
+    trims: Optional[str] = Form(None),
 ):
     if not rsz.have_ffmpeg():
         raise HTTPException(500, "ffmpeg не найден")
@@ -210,6 +223,8 @@ async def api_resize(
         raise HTTPException(400, "Не загружено ни одного файла")
     job = jobs_mod.store.create("upload", res)
     saved = await _save_uploads(job, files)
+    nc = NamingConfig.from_dict(_parse_json_form(naming, {}), DEFAULT_TEMPLATE_RESIZE)
+    trim_list = _parse_json_form(trims, [])
     pack_path = None
     if packshot is not None and packshot.filename:
         pack_dir = job.dir / "packshot"
@@ -221,7 +236,7 @@ async def api_resize(
                 if not chunk:
                     break
                 fh.write(chunk)
-    asyncio.create_task(jobs_mod.run_resize_job(job, saved, pack_path))
+    asyncio.create_task(jobs_mod.run_resize_job(job, saved, pack_path, nc, trim_list))
     return {"id": job.id, "status": job.status}
 
 
@@ -230,6 +245,8 @@ async def api_concat(
     files: list[UploadFile] = File(...),
     resolutions: str = Form(...),
     fade: bool = Form(False),
+    naming: Optional[str] = Form(None),
+    trims: Optional[str] = Form(None),
 ):
     if not rsz.have_ffmpeg():
         raise HTTPException(500, "ffmpeg не найден")
@@ -238,7 +255,9 @@ async def api_concat(
         raise HTTPException(400, "Для склейки нужно минимум 2 файла")
     job = jobs_mod.store.create("upload", res)
     saved = await _save_uploads(job, files)
-    asyncio.create_task(jobs_mod.run_concat_job(job, saved, fade))
+    nc = NamingConfig.from_dict(_parse_json_form(naming, {}), DEFAULT_TEMPLATE_CONCAT)
+    trim_list = _parse_json_form(trims, [])
+    asyncio.create_task(jobs_mod.run_concat_job(job, saved, fade, nc, trim_list))
     return {"id": job.id, "status": job.status}
 
 

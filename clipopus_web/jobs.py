@@ -17,6 +17,7 @@ from typing import Optional
 import httpx
 
 import resize as rsz
+from naming import NamingConfig, DEFAULT_TEMPLATE_RESIZE, DEFAULT_TEMPLATE_CONCAT
 from opus_client import (
     OpusClient,
     OpusError,
@@ -37,6 +38,11 @@ STATUS_FLOW = ("queued", "creating", "clipping", "downloading", "resizing", "don
 
 def _safe_name(name: str, maxlen: int = 50) -> str:
     return re.sub(r"[^\w\-. ]", "_", name).strip()[:maxlen] or "clip"
+
+
+def _clean_stem(p) -> str:
+    """Убираем технический upload-префикс вида '00_' из имени для шаблонов."""
+    return re.sub(r"^\d{2}_", "", Path(p).stem)
 
 
 class Job:
@@ -249,26 +255,39 @@ async def _download(client: httpx.AsyncClient, url: str, dst: Path):
                 fh.write(chunk)
 
 
-async def run_resize_job(job: Job, files: list[Path], packshot: Optional[Path] = None):
+async def run_resize_job(job: Job, files: list[Path], packshot: Optional[Path] = None,
+                         naming: Optional[NamingConfig] = None, trims: Optional[list] = None):
     """Локальный ресайз загруженных файлов в выбранные разрешения (без OpusClip).
-    packshot — опц. концевой клип, дописывается в конец каждого ролика."""
+    packshot — опц. концевой клип; naming — схема имён; trims — список {start,end} на файл."""
     try:
+        naming = naming or NamingConfig(mode="keep")
+        trims = trims or []
         out_dir = job.dir / "out"
         total = max(1, len(files) * len(job.resolutions))
         done = 0
         job.status = "resizing"
         if packshot:
             job.add_log(f"Пекшот-концовка: {Path(packshot).name}")
-        for f in files:
+        pack_dur = rsz.ffprobe_info(packshot)["duration"] if packshot else 0.0
+        for idx, f in enumerate(files):
+            f = Path(f)
+            t = trims[idx] if idx < len(trims) and isinstance(trims[idx], dict) else {}
+            ts = t.get("start"); te = t.get("end")
+            src_dur = rsz.ffprobe_info(f)["duration"]
+            s0 = max(0.0, float(ts)) if ts is not None else 0.0
+            eff = (min(float(te), src_dur) if te is not None else src_dur) - s0
+            out_dur = max(0.05, eff) + pack_dur
             for res_key in job.resolutions:
                 if job._stop:
                     job.status = "stopped"
                     return
-                job.add_log(f"{Path(f).name} → {res_key}")
+                out_name = naming.make_name(
+                    src_stem=_clean_stem(f), res_key=res_key, output_duration_sec=out_dur)
+                job.add_log(f"{f.name} → {res_key}  ⇒ {out_name}")
                 dst = await asyncio.to_thread(
                     rsz.resize_file, f, res_key, out_dir,
-                    out_name=f"{Path(f).stem}_{res_key}",
-                    packshot=packshot,
+                    out_name=out_name, packshot=packshot,
+                    trim_start=ts, trim_end=te,
                     stop_check=lambda: job._stop)
                 job.outputs.append({"name": dst.name, "file": str(dst.relative_to(DATA_DIR))})
                 done += 1
@@ -280,23 +299,40 @@ async def run_resize_job(job: Job, files: list[Path], packshot: Optional[Path] =
         job.status = "error"; job.error = str(e); job.add_log(f"Ошибка: {e}", "error")
 
 
-async def run_concat_job(job: Job, files: list[Path], fade: bool):
+async def run_concat_job(job: Job, files: list[Path], fade: bool,
+                         naming: Optional[NamingConfig] = None, trims: Optional[list] = None):
     """Склейка загруженных файлов в один (для каждого выбранного разрешения)."""
     try:
         if len(files) < 2:
             raise RuntimeError("Нужно минимум 2 файла")
+        naming = naming or NamingConfig(mode="custom", template=DEFAULT_TEMPLATE_CONCAT)
+        trims = trims or []
+        files = [Path(f) for f in files]
         out_dir = job.dir / "out"
         total = max(1, len(job.resolutions))
+        # суммарная длительность с учётом тримов (для имени)
+        tot = 0.0
+        for i, f in enumerate(files):
+            raw = rsz.ffprobe_info(f)["duration"]
+            t = trims[i] if i < len(trims) and isinstance(trims[i], dict) else {}
+            s0 = max(0.0, float(t.get("start") or 0))
+            e = float(t["end"]) if t.get("end") is not None else raw
+            tot += max(0.05, min(e, raw) - s0)
+        all_stems = [_clean_stem(f) for f in files]
         job.status = "resizing"
         for i, res_key in enumerate(job.resolutions):
             if job._stop:
                 job.status = "stopped"
                 return
-            job.add_log(f"Склейка {len(files)} файлов → {res_key}"
+            out_dur = tot - (0.5 * (len(files) - 1) if fade else 0)
+            out_name = naming.make_name(
+                src_stem=all_stems[0], res_key=res_key,
+                output_duration_sec=out_dur, all_src_stems=all_stems)
+            job.add_log(f"Склейка {len(files)} файлов → {res_key}  ⇒ {out_name}"
                         + (" (с переходом)" if fade else ""))
             dst = await asyncio.to_thread(
                 rsz.concat_files, files, res_key, out_dir,
-                fade=fade, out_name=f"concat_{res_key}",
+                fade=fade, trims=trims, out_name=out_name,
                 progress_cb=lambda p: setattr(job, "progress", p),
                 stop_check=lambda: job._stop)
             job.outputs.append({"name": dst.name, "file": str(dst.relative_to(DATA_DIR))})

@@ -135,11 +135,13 @@ def concat_files(
     out_dir: Path,
     *,
     fade: bool = False,
+    trims: Optional[list] = None,
     out_name: Optional[str] = None,
     progress_cb: Optional[Callable[[int], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
 ) -> Path:
-    """Склейка нескольких видео в одно (с ресайзом каждого в res_key). fade=плавный переход."""
+    """Склейка нескольких видео в одно (с ресайзом каждого в res_key). fade=плавный переход.
+    trims — опц. список {start,end} (сек) на каждый файл."""
     if res_key not in RESOLUTIONS:
         raise ValueError(f"Неизвестное разрешение: {res_key}")
     files = [Path(f) for f in files]
@@ -148,10 +150,17 @@ def concat_files(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     target_w, target_h = RESOLUTIONS[res_key]
+    trims = trims or []
 
     infos = [ffprobe_info(f) for f in files]
     has_audios = [i["has_audio"] for i in infos]
-    durations = [max(0.05, i["duration"]) for i in infos]
+    durations = []
+    for i, info in enumerate(infos):
+        raw = max(0.05, info["duration"])
+        t = trims[i] if i < len(trims) and isinstance(trims[i], dict) else {}
+        s = max(0.0, float(t.get("start") or 0))
+        e = float(t["end"]) if t.get("end") is not None else raw
+        durations.append(max(0.05, min(e, raw) - s))
     n = len(files)
 
     if fade and n >= 2:
@@ -166,8 +175,12 @@ def concat_files(
     dst = _unique_path(out_dir / f"{stem}.mp4")
 
     cmd = ["ffmpeg", "-y"]
-    for f in files:
-        cmd += ["-i", str(f)]
+    for i, f in enumerate(files):
+        t = trims[i] if i < len(trims) and isinstance(trims[i], dict) else {}
+        s = max(0.0, float(t.get("start") or 0))
+        if s > 0.01:
+            cmd += ["-ss", f"{s:.3f}"]
+        cmd += ["-t", f"{durations[i]:.3f}", "-i", str(f)]
     cmd += ["-filter_complex", fc, *maps,
             "-c:v", VIDEO_CODEC, "-preset", VIDEO_PRESET, "-crf", VIDEO_CRF,
             "-pix_fmt", PIX_FMT, "-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE,
@@ -212,12 +225,15 @@ def resize_file(
     *,
     out_name: Optional[str] = None,
     packshot: Optional[Path] = None,
+    trim_start: Optional[float] = None,
+    trim_end: Optional[float] = None,
     progress_cb: Optional[Callable[[int], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
 ) -> Path:
     """
     Ресайзит один файл в одно разрешение. Возвращает путь к результату.
     packshot — опц. концевой клип, дописывается в конец (тоже ресайзится в res_key).
+    trim_start/trim_end (сек) — вырезать только этот отрезок исходника.
     progress_cb(pct) вызывается по ходу (0..100). stop_check() → True прерывает.
     """
     if res_key not in RESOLUTIONS:
@@ -229,22 +245,36 @@ def resize_file(
     target_w, target_h = RESOLUTIONS[res_key]
     info = ffprobe_info(src)
 
+    # обрезка исходника
+    src_dur = max(0.05, info["duration"])
+    start = max(0.0, float(trim_start)) if trim_start is not None else 0.0
+    if trim_end is not None:
+        src_eff = max(0.05, min(float(trim_end), src_dur) - start)
+    else:
+        src_eff = max(0.05, src_dur - start)
+    trimming = (trim_start is not None) or (trim_end is not None)
+    trim_opts = []
+    if start > 0.01:
+        trim_opts += ["-ss", f"{start:.3f}"]
+    if trimming:
+        trim_opts += ["-t", f"{src_eff:.3f}"]
+
     pack_info = None
     if packshot is not None:
         packshot = Path(packshot)
         pack_info = ffprobe_info(packshot)
         fc, maps = _build_filter_resize_packshot(
             target_w, target_h, info["has_audio"], pack_info["has_audio"])
-        dur = max(0.05, info["duration"]) + max(0.05, pack_info["duration"])
+        dur = src_eff + max(0.05, pack_info["duration"])
     else:
         fc, maps = _build_filter_resize_only(target_w, target_h, info["has_audio"])
-        dur = max(0.05, info["duration"])
+        dur = src_eff
     total_us = max(1, int(dur * 1_000_000))
 
     stem = out_name or f"{src.stem}_{res_key}"
     dst = _unique_path(out_dir / f"{stem}.mp4")
 
-    cmd = ["ffmpeg", "-y", "-i", str(src)]
+    cmd = ["ffmpeg", "-y", *trim_opts, "-i", str(src)]
     if packshot is not None:
         cmd += ["-i", str(packshot)]
     cmd += [
