@@ -249,13 +249,16 @@ async def _download(client: httpx.AsyncClient, url: str, dst: Path):
                 fh.write(chunk)
 
 
-async def run_resize_job(job: Job, files: list[Path]):
-    """Локальный ресайз загруженных файлов в выбранные разрешения (без OpusClip)."""
+async def run_resize_job(job: Job, files: list[Path], packshot: Optional[Path] = None):
+    """Локальный ресайз загруженных файлов в выбранные разрешения (без OpusClip).
+    packshot — опц. концевой клип, дописывается в конец каждого ролика."""
     try:
         out_dir = job.dir / "out"
         total = max(1, len(files) * len(job.resolutions))
         done = 0
         job.status = "resizing"
+        if packshot:
+            job.add_log(f"Пекшот-концовка: {Path(packshot).name}")
         for f in files:
             for res_key in job.resolutions:
                 if job._stop:
@@ -265,6 +268,7 @@ async def run_resize_job(job: Job, files: list[Path]):
                 dst = await asyncio.to_thread(
                     rsz.resize_file, f, res_key, out_dir,
                     out_name=f"{Path(f).stem}_{res_key}",
+                    packshot=packshot,
                     stop_check=lambda: job._stop)
                 job.outputs.append({"name": dst.name, "file": str(dst.relative_to(DATA_DIR))})
                 done += 1

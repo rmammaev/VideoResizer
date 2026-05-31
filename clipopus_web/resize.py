@@ -79,6 +79,18 @@ def _build_filter_resize_only(target_w, target_h, src_has_audio):
     return fc, maps
 
 
+def _build_filter_resize_packshot(target_w, target_h, src_has_audio, pack_has_audio):
+    """Ресайз исходника + пекшота и склейка (пекшот дописывается в конец). app.py:383."""
+    parts = [
+        _fc_resize_chunk("[0:v]", "[v0]", target_w, target_h, "s"),
+        _fc_resize_chunk("[1:v]", "[v1]", target_w, target_h, "p"),
+        _fc_audio_chunk("[0:a]", "[a0]", src_has_audio),
+        _fc_audio_chunk("[1:a]", "[a1]", pack_has_audio),
+        "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]",
+    ]
+    return ";".join(parts), ["-map", "[v]", "-map", "[a]"]
+
+
 def _fc_audio_chunk(in_label, out_label, has_audio):
     if has_audio:
         return (f"{in_label}aresample=async=1,"
@@ -199,11 +211,13 @@ def resize_file(
     out_dir: Path,
     *,
     out_name: Optional[str] = None,
+    packshot: Optional[Path] = None,
     progress_cb: Optional[Callable[[int], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
 ) -> Path:
     """
     Ресайзит один файл в одно разрешение. Возвращает путь к результату.
+    packshot — опц. концевой клип, дописывается в конец (тоже ресайзится в res_key).
     progress_cb(pct) вызывается по ходу (0..100). stop_check() → True прерывает.
     """
     if res_key not in RESOLUTIONS:
@@ -214,16 +228,26 @@ def resize_file(
 
     target_w, target_h = RESOLUTIONS[res_key]
     info = ffprobe_info(src)
-    fc, maps = _build_filter_resize_only(target_w, target_h, info["has_audio"])
 
-    dur = max(0.05, info["duration"])
+    pack_info = None
+    if packshot is not None:
+        packshot = Path(packshot)
+        pack_info = ffprobe_info(packshot)
+        fc, maps = _build_filter_resize_packshot(
+            target_w, target_h, info["has_audio"], pack_info["has_audio"])
+        dur = max(0.05, info["duration"]) + max(0.05, pack_info["duration"])
+    else:
+        fc, maps = _build_filter_resize_only(target_w, target_h, info["has_audio"])
+        dur = max(0.05, info["duration"])
     total_us = max(1, int(dur * 1_000_000))
 
     stem = out_name or f"{src.stem}_{res_key}"
     dst = _unique_path(out_dir / f"{stem}.mp4")
 
-    cmd = [
-        "ffmpeg", "-y", "-i", str(src),
+    cmd = ["ffmpeg", "-y", "-i", str(src)]
+    if packshot is not None:
+        cmd += ["-i", str(packshot)]
+    cmd += [
         "-filter_complex", fc, *maps,
         "-c:v", VIDEO_CODEC, "-preset", VIDEO_PRESET, "-crf", VIDEO_CRF,
         "-pix_fmt", PIX_FMT, "-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE,

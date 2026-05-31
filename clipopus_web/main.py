@@ -201,6 +201,7 @@ def _parse_resolutions(resolutions: str) -> list[str]:
 async def api_resize(
     files: list[UploadFile] = File(...),
     resolutions: str = Form(...),
+    packshot: Optional[UploadFile] = File(None),
 ):
     if not rsz.have_ffmpeg():
         raise HTTPException(500, "ffmpeg не найден")
@@ -209,7 +210,18 @@ async def api_resize(
         raise HTTPException(400, "Не загружено ни одного файла")
     job = jobs_mod.store.create("upload", res)
     saved = await _save_uploads(job, files)
-    asyncio.create_task(jobs_mod.run_resize_job(job, saved))
+    pack_path = None
+    if packshot is not None and packshot.filename:
+        pack_dir = job.dir / "packshot"
+        pack_dir.mkdir(parents=True, exist_ok=True)
+        pack_path = pack_dir / re.sub(r"[^\w.\- ]", "_", packshot.filename)[:80]
+        with open(pack_path, "wb") as fh:
+            while True:
+                chunk = await packshot.read(1 << 20)
+                if not chunk:
+                    break
+                fh.write(chunk)
+    asyncio.create_task(jobs_mod.run_resize_job(job, saved, pack_path))
     return {"id": job.id, "status": job.status}
 
 

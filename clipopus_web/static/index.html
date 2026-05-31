@@ -70,6 +70,27 @@ nav.tabs button.active{background:var(--card);color:var(--text);border-color:var
 .filelist{display:flex;flex-direction:column;gap:5px}
 .filelist .f{display:flex;justify-content:space-between;gap:10px;font-size:12px;background:var(--bg);padding:6px 10px;border-radius:7px;color:var(--muted)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:6px}
+.group-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
+.group-card .gh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+.group-card .gh b{font-size:13px} .group-card .gh .mut{font-size:11px;color:var(--dim)}
+.upload.sm{padding:14px;font-size:13px}
+.cc-canvas{position:relative;height:400px;background:var(--log-bg);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.cc-canvas svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.cc-node{position:absolute;width:188px;background:var(--card);border:1px solid var(--border);border-radius:10px;user-select:none;z-index:2}
+.cc-node.unlinked{border-color:var(--warn)}
+.cc-head{display:flex;align-items:center;gap:6px;padding:7px 9px;cursor:grab;border-bottom:1px solid var(--border)}
+.cc-head:active{cursor:grabbing}
+.cc-num{width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.cc-num.q{background:var(--warn);color:#241a04}
+.cc-name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.cc-close{cursor:pointer;color:var(--dim);font-size:15px;line-height:1}
+.cc-close:hover{color:var(--danger)}
+.cc-body{padding:7px 9px;font-size:11px;color:var(--dim)}
+.cc-port{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--violet);top:13px;cursor:crosshair;border:2px solid var(--bg)}
+.cc-port.in{left:-9px} .cc-port.out{right:-9px}
+.cc-port:hover{background:var(--violet-hover,#bda4ff);transform:scale(1.2)}
+.iconbtn{background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;font-family:inherit}
+.iconbtn:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -124,23 +145,24 @@ nav.tabs button.active{background:var(--card);color:var(--text);border-color:var
 </footer>
 
 <div class="panel" id="panel-resize" hidden>
-  <h3>🖼️ Ресайзер</h3>
-  <div class="hint">Загрузи свои видео — каждое подгоню под выбранные форматы (вписывание с размытым фоном). Без OpusClip.</div>
-  <div class="res-chips" id="rzChips"></div>
-  <label class="upload"><input type="file" id="rzFiles" accept="video/*" multiple hidden>📁 Выбрать видеофайлы (можно несколько)</label>
-  <div class="filelist" id="rzList"></div>
-  <button class="send" id="rzBtn" style="height:42px;align-self:flex-start">Ресайзить</button>
+  <h3>🖼️ Ресайз</h3>
+  <div class="hint">Файлы по ориентации исходника → нужные форматы (blur-fit). Опционально — пекшот-концовка в конец каждого ролика. Без OpusClip.</div>
+  <div id="rzGroups"></div>
+  <button class="send" id="rzBtn" style="height:42px;align-self:flex-start">▶ СТАРТ</button>
   <div id="rzProgress"></div>
 </div>
 
 <div class="panel" id="panel-concat" hidden>
   <h3>🔗 Склейка</h3>
-  <div class="hint">Склею несколько роликов в один (в порядке выбора файлов). Каждый формат — отдельный итоговый файл.</div>
-  <div class="res-chips" id="ccChips"></div>
-  <label class="upload"><input type="file" id="ccFiles" accept="video/*" multiple hidden>📁 Выбрать видео для склейки (минимум 2, по порядку)</label>
-  <div class="filelist" id="ccList"></div>
-  <label class="dur" style="cursor:pointer"><input type="checkbox" id="ccFade"> <span>плавный переход между роликами (crossfade 0.5с)</span></label>
-  <button class="send" id="ccBtn" style="height:42px;align-self:flex-start">Склеить</button>
+  <div class="dur" style="flex-wrap:wrap">
+    <label style="cursor:pointer;display:flex;gap:6px;align-items:center"><input type="checkbox" id="ccFade"> Фейд (0.5с)</label>
+    <span style="margin-left:8px">форматы:</span>
+    <span class="res-chips" id="ccChips" style="display:inline-flex"></span>
+    <button class="iconbtn" id="ccAdd" style="margin-left:auto">+ Клип</button>
+  </div>
+  <div class="hint">Перетащи порт <b style="color:var(--violet)">OUT</b> (справа) на порт <b style="color:var(--violet)">IN</b> (слева) другого клипа — задаёшь порядок. Голова цепочки = клип без входящей связи.</div>
+  <div class="cc-canvas" id="ccCanvas"><svg id="ccEdges"></svg></div>
+  <button class="send" id="ccBtn" style="height:42px;align-self:flex-start">▶ СКЛЕИТЬ</button>
   <div id="ccProgress"></div>
 </div>
 
@@ -190,8 +212,8 @@ async function init(){
       if(r===res.default){ c.classList.add('on'); selected.add(r); }
       resChips.appendChild(c);
     });
-    buildChips('rzChips', rzSel, res.default);
-    buildChips('ccChips', ccSel, res.default);
+    setupResizeGroups();
+    setupConcat();
     const problems = [];
     if(!cfg.has_key) problems.push('нет OPUS_API_KEY');
     if(!cfg.ffmpeg) problems.push('нет ffmpeg');
@@ -308,16 +330,6 @@ sendBtn.onclick = send;
 urlInput.addEventListener('keydown', e=>{ if(e.key==='Enter') send(); });
 
 // ===== Вкладки =====
-const rzSel = new Set(), ccSel = new Set();
-function buildChips(containerId, set, def){
-  const cont = document.getElementById(containerId);
-  ALL_RES.forEach(r=>{
-    const c = el(`<div class="chip" data-r="${r}">${r} · ${RES_LABEL[r]||''}</div>`);
-    c.onclick = ()=>{ c.classList.toggle('on'); c.classList.contains('on')?set.add(r):set.delete(r); };
-    if(r===def){ c.classList.add('on'); set.add(r); }
-    cont.appendChild(c);
-  });
-}
 function switchTab(name){
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
   const clip = name==='clipopus';
@@ -328,19 +340,17 @@ function switchTab(name){
 }
 document.querySelectorAll('#tabs button').forEach(b=> b.onclick=()=>switchTab(b.dataset.tab));
 
-// ===== Загрузка файлов (Ресайзер / Склейка) =====
-function wireFileList(inputId, listId){
-  const inp = document.getElementById(inputId), list = document.getElementById(listId);
-  inp.addEventListener('change', ()=>{
-    list.innerHTML='';
-    [...inp.files].forEach((f,i)=> list.appendChild(el(
-      `<div class="f"><span>${i+1}. ${f.name}</span><span>${(f.size/1048576).toFixed(1)} МБ</span></div>`)));
-  });
-}
-wireFileList('rzFiles','rzList');
-wireFileList('ccFiles','ccList');
-
+// ===== Общий прогресс/поллинг для локальных job'ов =====
 const STATUS_UP = {queued:'в очереди',resizing:'обрабатываю…',done:'готово',error:'ошибка',stopped:'остановлено'};
+function newProgressCard(container, title){
+  const card = el(`<div class="card">
+    ${title?`<div class="hint" style="margin-bottom:6px">${title}</div>`:''}
+    <span class="status-pill" data-pill>старт…</span>
+    <div class="bar"><div data-bar></div></div>
+    <div class="log" data-log></div>
+    <div class="files" data-files></div></div>`);
+  container.appendChild(card); return card;
+}
 async function pollUpload(id, card){
   const pill=card.querySelector('[data-pill]'), bar=card.querySelector('[data-bar]'),
         logEl=card.querySelector('[data-log]'), filesEl=card.querySelector('[data-files]');
@@ -360,39 +370,180 @@ async function pollUpload(id, card){
     setTimeout(()=>pollUpload(id,card), 2000);
   }catch(e){ setTimeout(()=>pollUpload(id,card), 3500); }
 }
-function newProgressCard(container){
-  container.innerHTML='';
-  const card = el(`<div class="card">
-    <span class="status-pill" data-pill>старт…</span>
-    <div class="bar"><div data-bar></div></div>
-    <div class="log" data-log></div>
-    <div class="files" data-files></div></div>`);
-  container.appendChild(card); return card;
+
+// ===== РЕСАЙЗ: группы по ориентации + пекшоты =====
+const SLOT_DEFS = [
+  {id:'sq',   label:'1:1 → 1080×1080 + 1080×1350', hint:'квадратный исходник',  outputs:['1080x1080','1080x1350']},
+  {id:'v916', label:'9:16 → 1080×1920',            hint:'вертикальный исходник', outputs:['1080x1920']},
+  {id:'h169', label:'16:9 → 1920×1080',            hint:'горизонтальный исходник', outputs:['1920x1080']},
+];
+const rzGroups = {};  // id -> {files:[], packshot:File|null, sel:Set}
+function setupResizeGroups(){
+  const root = document.getElementById('rzGroups'); root.innerHTML='';
+  SLOT_DEFS.forEach(def=>{
+    const g = {files:[], packshot:null, sel:new Set(def.outputs)};
+    rzGroups[def.id]=g;
+    const card = el(`<div class="group-card" style="margin-bottom:12px">
+      <div class="gh"><b>${def.label}</b><span class="mut">${def.hint}</span></div>
+      <div class="res-chips" data-chips></div>
+      <label class="upload sm"><input type="file" accept="video/*" multiple hidden data-files>📁 Выбрать видео (можно несколько)</label>
+      <div class="filelist" data-list style="margin-top:6px"></div>
+      <label class="upload sm" style="margin-top:6px"><input type="file" accept="video/*" hidden data-pack>🏷️ Пекшот-концовка (опц.)</label>
+      <div class="hint" data-packname></div>
+    </div>`);
+    const chips = card.querySelector('[data-chips]');
+    def.outputs.forEach(r=>{
+      const c = el(`<div class="chip on" data-r="${r}">${r} · ${RES_LABEL[r]||''}</div>`);
+      c.onclick=()=>{ c.classList.toggle('on'); c.classList.contains('on')?g.sel.add(r):g.sel.delete(r); };
+      chips.appendChild(c);
+    });
+    const fi=card.querySelector('[data-files]'), list=card.querySelector('[data-list]');
+    fi.addEventListener('change',()=>{ g.files=[...fi.files]; list.innerHTML='';
+      g.files.forEach((f,i)=>list.appendChild(el(`<div class="f"><span>${i+1}. ${f.name}</span><span>${(f.size/1048576).toFixed(1)} МБ</span></div>`))); });
+    const pk=card.querySelector('[data-pack]'), pn=card.querySelector('[data-packname]');
+    pk.addEventListener('change',()=>{ g.packshot=pk.files[0]||null; pn.textContent=g.packshot?('пекшот: '+g.packshot.name):''; });
+    root.appendChild(card);
+  });
 }
-async function runUpload(endpoint, fileInput, set, btn, progressContainer, extra){
-  const files=[...fileInput.files];
-  if(!files.length){ alert('Выбери файлы'); return; }
-  if(!set.size){ alert('Выбери хотя бы один формат'); return; }
-  if(extra && extra.minFiles && files.length<extra.minFiles){ alert('Нужно минимум '+extra.minFiles+' файла'); return; }
-  const fd=new FormData();
-  files.forEach(f=> fd.append('files', f));
-  fd.append('resolutions', [...set].join(','));
-  if(extra && extra.fade!==undefined) fd.append('fade', extra.fade?'true':'false');
-  btn.disabled=true; const card=newProgressCard(progressContainer);
+document.getElementById('rzBtn').onclick=async()=>{
+  const active = SLOT_DEFS.map(d=>rzGroups[d.id]).filter(g=>g.files.length && g.sel.size);
+  if(!active.length){ alert('Добавь видео хотя бы в одну группу и оставь хотя бы один формат'); return; }
+  const btn=document.getElementById('rzBtn'); btn.disabled=true;
+  const cont=document.getElementById('rzProgress'); cont.innerHTML='';
   try{
-    const r=await fetch(endpoint,{method:'POST',body:fd});
-    if(!r.ok){ const e=await r.json().catch(()=>({})); card.querySelector('[data-pill]').textContent='ошибка: '+(e.detail||r.statusText); btn.disabled=false; return; }
-    const {id}=await r.json();
-    await pollUpload(id, card);
-  }catch(e){ card.querySelector('[data-pill]').textContent='сеть: '+e; }
-  finally{ btn.disabled=false; }
+    for(const def of SLOT_DEFS){
+      const g=rzGroups[def.id];
+      if(!g.files.length || !g.sel.size) continue;
+      const fd=new FormData();
+      g.files.forEach(f=>fd.append('files',f));
+      fd.append('resolutions',[...g.sel].join(','));
+      if(g.packshot) fd.append('packshot', g.packshot);
+      const card=newProgressCard(cont, def.label);
+      const r=await fetch('/api/resize',{method:'POST',body:fd});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); card.querySelector('[data-pill]').textContent='ошибка: '+(e.detail||r.statusText); continue; }
+      const {id}=await r.json(); pollUpload(id,card);
+    }
+  } finally { btn.disabled=false; }
+};
+
+// ===== СКЛЕЙКА: node-граф =====
+const ccSel = new Set();
+const cc = {nodes:{}, edges:[], next:1, dragNode:null, linkFrom:null};
+function setupConcat(){
+  const chips=document.getElementById('ccChips');
+  ALL_RES.forEach(r=>{
+    const c=el(`<div class="chip" data-r="${r}">${RES_LABEL[r]||r}</div>`);
+    c.onclick=()=>{ c.classList.toggle('on'); c.classList.contains('on')?ccSel.add(r):ccSel.delete(r); };
+    if(r==='1080x1920'){ c.classList.add('on'); ccSel.add(r); }
+    chips.appendChild(c);
+  });
+  const add=document.getElementById('ccAdd');
+  const picker=el(`<input type="file" accept="video/*" multiple hidden>`); document.body.appendChild(picker);
+  add.onclick=()=>picker.click();
+  picker.addEventListener('change',()=>{ [...picker.files].forEach(addNode); picker.value=''; });
+  setupCanvasDrag();
 }
-document.getElementById('rzBtn').onclick=()=>runUpload('/api/resize',
-  document.getElementById('rzFiles'), rzSel, document.getElementById('rzBtn'),
-  document.getElementById('rzProgress'));
-document.getElementById('ccBtn').onclick=()=>runUpload('/api/concat',
-  document.getElementById('ccFiles'), ccSel, document.getElementById('ccBtn'),
-  document.getElementById('ccProgress'), {minFiles:2, fade:document.getElementById('ccFade').checked});
+function addNode(file){
+  const id='n'+(cc.next++);
+  const n=cc.nodes[id]={id, file, x:20+(Object.keys(cc.nodes).length%4)*46, y:20+(Object.keys(cc.nodes).length%6)*30};
+  const canvas=document.getElementById('ccCanvas');
+  const node=el(`<div class="cc-node" data-id="${id}" style="left:${n.x}px;top:${n.y}px">
+    <div class="cc-port in" data-port="in"></div>
+    <div class="cc-port out" data-port="out"></div>
+    <div class="cc-head"><span class="cc-num"></span><span class="cc-name">${file.name}</span><span class="cc-close">×</span></div>
+    <div class="cc-body">${(file.size/1048576).toFixed(1)} МБ</div>
+  </div>`);
+  node.querySelector('.cc-close').onclick=(e)=>{ e.stopPropagation();
+    delete cc.nodes[id]; cc.edges=cc.edges.filter(ed=>ed.from!==id&&ed.to!==id); node.remove(); redrawEdges(); };
+  canvas.appendChild(node); redrawEdges();
+}
+function orderedIds(){
+  // голова = нода без входящих; идём по edges
+  const ids=Object.keys(cc.nodes); if(!ids.length) return [];
+  const incoming=new Set(cc.edges.map(e=>e.to));
+  const nextOf={}; cc.edges.forEach(e=>nextOf[e.from]=e.to);
+  let head=ids.find(i=>!incoming.has(i)) || ids[0];
+  const order=[]; const seen=new Set(); let cur=head;
+  while(cur && !seen.has(cur)){ seen.add(cur); order.push(cur); cur=nextOf[cur]; }
+  ids.forEach(i=>{ if(!seen.has(i)) order.push(i); }); // несвязанные — в конец
+  return order;
+}
+function mkPath(d, dashed){
+  const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+  p.setAttribute('d',d); p.setAttribute('stroke','var(--violet)');
+  p.setAttribute('stroke-width', dashed?'2':'2.5'); p.setAttribute('fill','none');
+  if(dashed) p.setAttribute('stroke-dasharray','5');
+  return p;
+}
+function redrawEdges(){
+  const order=orderedIds(), pos={}; order.forEach((id,i)=>pos[id]=i+1);
+  // нумерация + подсветка несвязанных
+  Object.keys(cc.nodes).forEach(id=>{
+    const node=document.querySelector(`.cc-node[data-id="${id}"]`); if(!node) return;
+    const linked = cc.edges.some(e=>e.from===id||e.to===id) || Object.keys(cc.nodes).length===1;
+    node.classList.toggle('unlinked', !linked && Object.keys(cc.nodes).length>1);
+    const num=node.querySelector('.cc-num'); num.textContent=pos[id]||'?';
+  });
+  // svg линии
+  const svg=document.getElementById('ccEdges'); const canvas=document.getElementById('ccCanvas');
+  const cr=canvas.getBoundingClientRect();
+  svg.innerHTML='';
+  cc.edges.forEach(e=>{
+    const a=document.querySelector(`.cc-node[data-id="${e.from}"] .cc-port.out`);
+    const b=document.querySelector(`.cc-node[data-id="${e.to}"] .cc-port.in`);
+    if(!a||!b) return;
+    const ar=a.getBoundingClientRect(), br=b.getBoundingClientRect();
+    const x1=ar.left-cr.left+7, y1=ar.top-cr.top+7, x2=br.left-cr.left+7, y2=br.top-cr.top+7;
+    const dx=Math.abs(x2-x1)*0.5;
+    svg.appendChild(mkPath(`M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`));
+  });
+}
+function setupCanvasDrag(){
+  const canvas=document.getElementById('ccCanvas');
+  canvas.addEventListener('pointerdown', e=>{
+    const port=e.target.closest('.cc-port'); const head=e.target.closest('.cc-head');
+    const node=e.target.closest('.cc-node'); if(!node) return;
+    const id=node.dataset.id; const cr=canvas.getBoundingClientRect();
+    if(port && port.dataset.port==='out'){           // тянем связь
+      cc.linkFrom=id;
+      const move=ev=>{ redrawEdges();
+        const svg=document.getElementById('ccEdges');
+        const a=node.querySelector('.cc-port.out').getBoundingClientRect();
+        svg.appendChild(mkPath(`M${a.left-cr.left+7},${a.top-cr.top+7} L${ev.clientX-cr.left},${ev.clientY-cr.top}`, true)); };
+      const up=ev=>{ document.removeEventListener('pointermove',move); document.removeEventListener('pointerup',up);
+        const tgt=document.elementFromPoint(ev.clientX,ev.clientY); const tp=tgt&&tgt.closest('.cc-port');
+        if(tp && tp.dataset.port==='in'){ const toId=tp.closest('.cc-node').dataset.id;
+          if(toId!==id){ cc.edges=cc.edges.filter(x=>x.from!==id && x.to!==toId); cc.edges.push({from:id,to:toId}); } }
+        cc.linkFrom=null; redrawEdges(); };
+      document.addEventListener('pointermove',move); document.addEventListener('pointerup',up); e.preventDefault(); return;
+    }
+    if(head){                                         // двигаем ноду
+      const n=cc.nodes[id]; const ox=e.clientX-n.x, oy=e.clientY-n.y;
+      const move=ev=>{ n.x=Math.max(0,ev.clientX-ox); n.y=Math.max(0,ev.clientY-oy);
+        node.style.left=n.x+'px'; node.style.top=n.y+'px'; redrawEdges(); };
+      const up=()=>{ document.removeEventListener('pointermove',move); document.removeEventListener('pointerup',up); };
+      document.addEventListener('pointermove',move); document.addEventListener('pointerup',up); e.preventDefault();
+    }
+  });
+}
+document.getElementById('ccBtn').onclick=async()=>{
+  const order=orderedIds();
+  if(order.length<2){ alert('Добавь минимум 2 клипа'); return; }
+  if(!ccSel.size){ alert('Выбери хотя бы один формат'); return; }
+  const btn=document.getElementById('ccBtn'); btn.disabled=true;
+  const cont=document.getElementById('ccProgress'); cont.innerHTML='';
+  try{
+    const fd=new FormData();
+    order.forEach(id=>fd.append('files', cc.nodes[id].file));
+    fd.append('resolutions',[...ccSel].join(','));
+    fd.append('fade', document.getElementById('ccFade').checked?'true':'false');
+    const card=newProgressCard(cont, 'Склейка '+order.length+' клипов · '+[...ccSel].map(r=>RES_LABEL[r]).join(', '));
+    const r=await fetch('/api/concat',{method:'POST',body:fd});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); card.querySelector('[data-pill]').textContent='ошибка: '+(e.detail||r.statusText); return; }
+    const {id}=await r.json(); pollUpload(id,card);
+  } finally { btn.disabled=false; }
+};
+window.addEventListener('resize', ()=>{ if(!document.getElementById('panel-concat').hidden) redrawEdges(); });
 init();
 </script>
 </body>
